@@ -18,6 +18,7 @@ Environment variables:
 - `LOG_LEVEL` (default: `INFO`)
 - `BAN_ADDRESS_METRICS` (default: `false`)
 - `BAN_ADDRESS_LIMIT` (default: `100`)
+- `EMIT_CHAINTIPS_METRIC` (default: `true`; set to `false` to skip `getchaintips` RPC call)
 
 ## Run
 ### Local

@@ -36,6 +36,7 @@ type config struct {
 	logLevel       string
 	banAddrMetrics bool
 	banAddrLimit   int
+	chaintips      bool
 }
 
 func loadConfig() config {
@@ -55,6 +56,7 @@ func loadConfig() config {
 	cfg.timeout = envIntOrDefault("TIMEOUT", 30)
 	cfg.banAddrMetrics = strings.EqualFold(envOrDefault("BAN_ADDRESS_METRICS", "false"), "true")
 	cfg.banAddrLimit = envIntOrDefault("BAN_ADDRESS_LIMIT", 100)
+	cfg.chaintips = !strings.EqualFold(envOrDefault("EMIT_CHAINTIPS_METRIC", "true"), "false")
 
 	cfg.hashpsBlocks = parseIntList(envOrDefault("HASHPS_BLOCKS", "-1,1,120"))
 	cfg.smartFeeBlocks = parseIntList(envOrDefault("SMARTFEE_BLOCKS", "2,3,5,20"))

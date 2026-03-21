@@ -108,7 +108,9 @@ func newMetrics(cfg config) *metrics {
 	m.latestBlockFee = regGauge(reg, "bitcoin_latest_block_fee", "Total fee to process the latest block")
 
 	m.txcount = regGauge(reg, "bitcoin_txcount", "Number of TX since the genesis block")
-	m.numChaintips = regGauge(reg, "bitcoin_num_chaintips", "Number of known blockchain branches")
+	if cfg.chaintips {
+		m.numChaintips = regGauge(reg, "bitcoin_num_chaintips", "Number of known blockchain branches")
+	}
 	m.totalBytesRecv = regGauge(reg, "bitcoin_total_bytes_recv", "Total bytes received")
 	m.totalBytesSent = regGauge(reg, "bitcoin_total_bytes_sent", "Total bytes sent")
 
@@ -335,97 +337,107 @@ func (e *exporter) refreshMetrics() error {
 	if err != nil {
 		return err
 	}
+	m.uptime.Set(math.Trunc(uptime))
 
 	memoryinfo, err := e.rpcCallMap("getmemoryinfo", "stats")
 	if err != nil {
 		return err
 	}
-	meminfo, _ := memoryinfo["locked"].(map[string]any)
+	if meminfo, ok := memoryinfo["locked"].(map[string]any); ok {
+		m.meminfoUsed.Set(jsonFloat(meminfo["used"]))
+		m.meminfoFree.Set(jsonFloat(meminfo["free"]))
+		m.meminfoTotal.Set(jsonFloat(meminfo["total"]))
+		m.meminfoLocked.Set(jsonFloat(meminfo["locked"]))
+		m.meminfoChunksUsed.Set(jsonFloat(meminfo["chunks_used"]))
+		m.meminfoChunksFree.Set(jsonFloat(meminfo["chunks_free"]))
+	}
 
 	blockchaininfo, err := e.rpcCallMap("getblockchaininfo")
 	if err != nil {
 		return err
 	}
+	m.blocks.Set(jsonFloat(blockchaininfo["blocks"]))
+	m.difficulty.Set(jsonFloat(blockchaininfo["difficulty"]))
+	m.sizeOnDisk.Set(jsonFloat(blockchaininfo["size_on_disk"]))
+	m.verificationProgress.Set(jsonFloat(blockchaininfo["verificationprogress"]))
 
 	networkinfo, err := e.rpcCallMap("getnetworkinfo")
 	if err != nil {
 		return err
 	}
-
-	chaintips, err := e.rpcCallList("getchaintips")
-	if err != nil {
-		return err
-	}
-
-	mempool, err := e.rpcCallMap("getmempoolinfo")
-	if err != nil {
-		return err
-	}
-
-	nettotals, err := e.rpcCallMap("getnettotals")
-	if err != nil {
-		return err
-	}
-
-	rpcinfo, err := e.rpcCallMap("getrpcinfo")
-	if err != nil {
-		return err
-	}
-
-	txstats, err := e.rpcCallMap("getchaintxstats")
-	if err != nil {
-		return err
-	}
-
-	bestBlockHash, _ := blockchaininfo["bestblockhash"].(string)
-	latestBlockStats := e.getBlockStats(bestBlockHash)
-
-	banned, err := e.rpcCallList("listbanned")
-	if err != nil {
-		return err
-	}
-
-	m.uptime.Set(math.Trunc(uptime))
-	m.blocks.Set(jsonFloat(blockchaininfo["blocks"]))
 	m.peers.Set(jsonFloat(networkinfo["connections"]))
-
 	if _, ok := networkinfo["connections_in"]; ok {
 		m.connIn.Set(jsonFloat(networkinfo["connections_in"]))
 	}
 	if _, ok := networkinfo["connections_out"]; ok {
 		m.connOut.Set(jsonFloat(networkinfo["connections_out"]))
 	}
-
-	m.difficulty.Set(jsonFloat(blockchaininfo["difficulty"]))
 	m.serverVersion.Set(jsonFloat(networkinfo["version"]))
 	m.protocolVersion.Set(jsonFloat(networkinfo["protocolversion"]))
-	m.sizeOnDisk.Set(jsonFloat(blockchaininfo["size_on_disk"]))
-	m.verificationProgress.Set(jsonFloat(blockchaininfo["verificationprogress"]))
-
-	for _, n := range e.cfg.smartFeeBlocks {
-		result, err := e.rpcCallMap("estimatesmartfee", n)
-		if err != nil {
-			slog.Error("estimatesmartfee failed", "blocks", n, "error", err)
-			continue
-		}
-		if feerate, ok := result["feerate"]; ok && feerate != nil {
-			if g, exists := m.smartFeeGauges[n]; exists {
-				g.Set(jsonFloat(feerate))
-			}
-		}
+	warnings, _ := networkinfo["warnings"].(string)
+	if warnings != "" {
+		m.warnings.Set(1)
+	} else {
+		m.warnings.Set(0)
 	}
 
-	for _, n := range e.cfg.hashpsBlocks {
-		hps, err := e.rpcCallFloat("getnetworkhashps", n)
+	if e.cfg.chaintips {
+		chaintips, err := e.rpcCallList("getchaintips")
 		if err != nil {
-			slog.Error("getnetworkhashps failed", "blocks", n, "error", err)
-			continue
+			return err
 		}
-		if g, exists := m.hashpsGauges[n]; exists {
-			g.Set(hps)
-		}
+		m.numChaintips.Set(float64(len(chaintips)))
 	}
 
+	mempool, err := e.rpcCallMap("getmempoolinfo")
+	if err != nil {
+		return err
+	}
+	m.mempoolBytes.Set(jsonFloat(mempool["bytes"]))
+	m.mempoolSize.Set(jsonFloat(mempool["size"]))
+	m.mempoolUsage.Set(jsonFloat(mempool["usage"]))
+	m.mempoolMinfee.Set(jsonFloat(mempool["mempoolminfee"]))
+	if _, ok := mempool["unbroadcastcount"]; ok {
+		m.mempoolUnbroadcast.Set(jsonFloat(mempool["unbroadcastcount"]))
+	}
+
+	nettotals, err := e.rpcCallMap("getnettotals")
+	if err != nil {
+		return err
+	}
+	m.totalBytesRecv.Set(jsonFloat(nettotals["totalbytesrecv"]))
+	m.totalBytesSent.Set(jsonFloat(nettotals["totalbytessent"]))
+
+	rpcinfo, err := e.rpcCallMap("getrpcinfo")
+	if err != nil {
+		return err
+	}
+	activeCommands, _ := rpcinfo["active_commands"].([]any)
+	m.rpcActive.Set(float64(len(activeCommands)))
+
+	txstats, err := e.rpcCallMap("getchaintxstats")
+	if err != nil {
+		return err
+	}
+	m.txcount.Set(jsonFloat(txstats["txcount"]))
+
+	bestBlockHash, _ := blockchaininfo["bestblockhash"].(string)
+	latestBlockStats := e.getBlockStats(bestBlockHash)
+	if latestBlockStats != nil {
+		m.latestBlockSize.Set(latestBlockStats["total_size"])
+		m.latestBlockTxs.Set(latestBlockStats["txs"])
+		m.latestBlockHeight.Set(latestBlockStats["height"])
+		m.latestBlockWeight.Set(latestBlockStats["total_weight"])
+		m.latestBlockInputs.Set(latestBlockStats["ins"])
+		m.latestBlockOutputs.Set(latestBlockStats["outs"])
+		m.latestBlockValue.Set(latestBlockStats["total_out"] / satoshisPerCoin)
+		m.latestBlockFee.Set(latestBlockStats["totalfee"] / satoshisPerCoin)
+	}
+
+	banned, err := e.rpcCallList("listbanned")
+	if err != nil {
+		return err
+	}
 	m.bannedPeers.Set(float64(len(banned)))
 	if e.cfg.banAddrMetrics && m.banCreated != nil && m.bannedUntil != nil {
 		m.banCreated.Reset()
@@ -451,49 +463,29 @@ func (e *exporter) refreshMetrics() error {
 		}
 	}
 
-	warnings, _ := networkinfo["warnings"].(string)
-	if warnings != "" {
-		m.warnings.Set(1)
-	} else {
-		m.warnings.Set(0)
+	for _, n := range e.cfg.smartFeeBlocks {
+		result, err := e.rpcCallMap("estimatesmartfee", n)
+		if err != nil {
+			slog.Error("estimatesmartfee failed", "blocks", n, "error", err)
+			continue
+		}
+		if feerate, ok := result["feerate"]; ok && feerate != nil {
+			if g, exists := m.smartFeeGauges[n]; exists {
+				g.Set(jsonFloat(feerate))
+			}
+		}
 	}
 
-	m.txcount.Set(jsonFloat(txstats["txcount"]))
-	m.numChaintips.Set(float64(len(chaintips)))
-
-	if meminfo != nil {
-		m.meminfoUsed.Set(jsonFloat(meminfo["used"]))
-		m.meminfoFree.Set(jsonFloat(meminfo["free"]))
-		m.meminfoTotal.Set(jsonFloat(meminfo["total"]))
-		m.meminfoLocked.Set(jsonFloat(meminfo["locked"]))
-		m.meminfoChunksUsed.Set(jsonFloat(meminfo["chunks_used"]))
-		m.meminfoChunksFree.Set(jsonFloat(meminfo["chunks_free"]))
+	for _, n := range e.cfg.hashpsBlocks {
+		hps, err := e.rpcCallFloat("getnetworkhashps", n)
+		if err != nil {
+			slog.Error("getnetworkhashps failed", "blocks", n, "error", err)
+			continue
+		}
+		if g, exists := m.hashpsGauges[n]; exists {
+			g.Set(hps)
+		}
 	}
-
-	m.mempoolBytes.Set(jsonFloat(mempool["bytes"]))
-	m.mempoolSize.Set(jsonFloat(mempool["size"]))
-	m.mempoolUsage.Set(jsonFloat(mempool["usage"]))
-	m.mempoolMinfee.Set(jsonFloat(mempool["mempoolminfee"]))
-	if _, ok := mempool["unbroadcastcount"]; ok {
-		m.mempoolUnbroadcast.Set(jsonFloat(mempool["unbroadcastcount"]))
-	}
-
-	m.totalBytesRecv.Set(jsonFloat(nettotals["totalbytesrecv"]))
-	m.totalBytesSent.Set(jsonFloat(nettotals["totalbytessent"]))
-
-	if latestBlockStats != nil {
-		m.latestBlockSize.Set(latestBlockStats["total_size"])
-		m.latestBlockTxs.Set(latestBlockStats["txs"])
-		m.latestBlockHeight.Set(latestBlockStats["height"])
-		m.latestBlockWeight.Set(latestBlockStats["total_weight"])
-		m.latestBlockInputs.Set(latestBlockStats["ins"])
-		m.latestBlockOutputs.Set(latestBlockStats["outs"])
-		m.latestBlockValue.Set(latestBlockStats["total_out"] / satoshisPerCoin)
-		m.latestBlockFee.Set(latestBlockStats["totalfee"] / satoshisPerCoin)
-	}
-
-	activeCommands, _ := rpcinfo["active_commands"].([]any)
-	m.rpcActive.Set(float64(len(activeCommands)))
 
 	return nil
 }

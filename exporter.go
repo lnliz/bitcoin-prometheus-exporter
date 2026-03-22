@@ -9,6 +9,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var buildCommit = "unknown"
 
 const satoshisPerCoin = 1e8
 
@@ -185,6 +188,9 @@ func newMetrics(cfg config) *metrics {
 		Buckets: prometheus.DefBuckets,
 	})
 	reg.MustRegister(m.processTime)
+
+	buildInfo := regGaugeVec(reg, "bitcoin_exporter_build_info", "Build information for the exporter", "goversion", "commit")
+	buildInfo.WithLabelValues(runtime.Version(), buildCommit).Set(1)
 
 	for _, n := range cfg.hashpsBlocks {
 		name, desc := hashpsNameDesc(n)

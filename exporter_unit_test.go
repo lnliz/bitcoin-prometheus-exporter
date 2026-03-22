@@ -340,6 +340,9 @@ func TestHandleMetricsSuccess(t *testing.T) {
 	if !strings.Contains(body, "bitcoin_exporter_process_time_seconds_count") {
 		t.Fatalf("metrics output missing process histogram count")
 	}
+	if !strings.Contains(body, "bitcoin_exporter_build_info") {
+		t.Fatalf("metrics output missing bitcoin_exporter_build_info")
+	}
 	if got := testutil.ToFloat64(exp.metrics.scrapeSuccess); got != 1 {
 		t.Fatalf("scrapeSuccess mismatch: got %v want 1", got)
 	}

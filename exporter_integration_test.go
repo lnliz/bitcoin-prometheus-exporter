@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -52,7 +53,7 @@ func TestIntegrationRefreshMetricsWithRealRPC(t *testing.T) {
 	cfg := integrationConfigFromEnv(t)
 	exp := newExporter(cfg)
 
-	if err := exp.refreshMetrics(); err != nil {
+	if err := exp.refreshMetrics(context.Background()); err != nil {
 		t.Fatalf("refreshMetrics failed: %v", err)
 	}
 

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net"
@@ -52,7 +53,7 @@ func TestRPCClientCallSuccess(t *testing.T) {
 	defer srv.Close()
 
 	client := newRPCClient(srv.URL, "user", "pwd", 2*time.Second)
-	raw, err := client.call("uptime")
+	raw, err := client.call(context.Background(),"uptime")
 	if err != nil {
 		t.Fatalf("rpc call failed: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestRPCClientCallRPCError(t *testing.T) {
 	defer srv.Close()
 
 	client := newRPCClient(srv.URL, "", "", 2*time.Second)
-	_, err := client.call("getblockchaininfo")
+	_, err := client.call(context.Background(),"getblockchaininfo")
 	if err == nil {
 		t.Fatalf("expected rpc error")
 	}
@@ -98,7 +99,7 @@ func TestRPCClientCallInvalidJSON(t *testing.T) {
 	defer srv.Close()
 
 	client := newRPCClient(srv.URL, "", "", 2*time.Second)
-	_, err := client.call("getblockchaininfo")
+	_, err := client.call(context.Background(),"getblockchaininfo")
 	if err == nil {
 		t.Fatalf("expected error")
 	}

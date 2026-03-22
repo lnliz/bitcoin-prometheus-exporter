@@ -60,7 +60,29 @@ func newRPCClient(url, user, password string, timeout time.Duration) *rpcClient 
 	}
 }
 
-func (c *rpcClient) call(method string, params ...any) (json.RawMessage, error) {
+func jsonBool(v any) float64 {
+	switch b := v.(type) {
+	case bool:
+		if b {
+			return 1
+		}
+		return 0
+	case float64:
+		if b != 0 {
+			return 1
+		}
+		return 0
+	case int:
+		if b != 0 {
+			return 1
+		}
+		return 0
+	default:
+		return 0
+	}
+}
+
+func (c *rpcClient) call(ctx context.Context, method string, params ...any) (json.RawMessage, error) {
 	if params == nil {
 		params = []any{}
 	}
@@ -79,7 +101,7 @@ func (c *rpcClient) call(method string, params ...any) (json.RawMessage, error) 
 
 	slog.Debug("RPC call", "method", method, "params", params)
 
-	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", c.url, bytes.NewReader(body))
@@ -156,12 +178,12 @@ type retryableRPC struct {
 	initialDelay time.Duration
 }
 
-func (r *retryableRPC) call(method string, params ...any) (json.RawMessage, error) {
+func (r *retryableRPC) call(ctx context.Context, method string, params ...any) (json.RawMessage, error) {
 	deadline := time.Now().Add(r.timeout)
 	delay := r.initialDelay
 
 	for {
-		result, err := r.client.call(method, params...)
+		result, err := r.client.call(ctx, method, params...)
 		if err == nil {
 			return result, nil
 		}

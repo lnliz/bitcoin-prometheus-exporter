@@ -185,6 +185,12 @@ func handleRoot(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, rootPageHTML)
 }
 
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok\n"))
+}
+
 func main() {
 	cfg := loadConfig()
 
@@ -204,6 +210,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", handleRoot)
+	mux.HandleFunc("/healthz", handleHealthz)
 	mux.HandleFunc("/metrics", exp.handleMetrics)
 
 	addr := fmt.Sprintf("%s:%d", cfg.metricsAddr, cfg.metricsPort)

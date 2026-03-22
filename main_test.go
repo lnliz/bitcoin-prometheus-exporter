@@ -105,3 +105,20 @@ func TestHandleRootNotFound(t *testing.T) {
 		t.Fatalf("unexpected status for non-root: got %d want %d", rr.Code, http.StatusNotFound)
 	}
 }
+
+func TestHandleHealthz(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	rr := httptest.NewRecorder()
+
+	handleHealthz(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status for healthz: got %d want %d", rr.Code, http.StatusOK)
+	}
+	if ct := rr.Header().Get("Content-Type"); ct != "text/plain; charset=utf-8" {
+		t.Fatalf("unexpected content type: %q", ct)
+	}
+	if body := rr.Body.String(); body != "ok\n" {
+		t.Fatalf("unexpected body: %q", body)
+	}
+}

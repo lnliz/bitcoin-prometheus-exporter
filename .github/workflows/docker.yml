@@ -24,3 +24,4 @@ jobs:
         run: |
           docker tag lnliz/bitcoin-prometheus-exporter:${{ github.sha }} lnliz/bitcoin-prometheus-exporter:latest
           docker push lnliz/bitcoin-prometheus-exporter:latest
+          docker push lnliz/bitcoin-prometheus-exporter:${{ github.sha }}

@@ -53,7 +53,7 @@ func loadConfig() config {
 	cfg.confPath, cfg.confPathSet = os.LookupEnv("BITCOIN_CONF_PATH")
 
 	cfg.metricsPort = envIntOrDefault("METRICS_PORT", 9332)
-	cfg.timeout = envIntOrDefault("TIMEOUT", 30)
+	cfg.timeout = envPositiveIntOrDefault("TIMEOUT", 30)
 	cfg.banAddrMetrics = strings.EqualFold(envOrDefault("BAN_ADDRESS_METRICS", "false"), "true")
 	cfg.banAddrLimit = envIntOrDefault("BAN_ADDRESS_LIMIT", 100)
 	cfg.chaintips = !strings.EqualFold(envOrDefault("EMIT_CHAINTIPS_METRIC", "true"), "false")
@@ -78,6 +78,14 @@ func envIntOrDefault(key string, fallback int) int {
 	}
 	v, err := strconv.Atoi(s)
 	if err != nil {
+		return fallback
+	}
+	return v
+}
+
+func envPositiveIntOrDefault(key string, fallback int) int {
+	v := envIntOrDefault(key, fallback)
+	if v <= 0 {
 		return fallback
 	}
 	return v
@@ -215,8 +223,9 @@ func main() {
 
 	addr := fmt.Sprintf("%s:%d", cfg.metricsAddr, cfg.metricsPort)
 	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	sigCh := make(chan os.Signal, 1)

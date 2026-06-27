@@ -59,6 +59,23 @@ func TestEnvIntOrDefault(t *testing.T) {
 	}
 }
 
+func TestEnvPositiveIntOrDefault(t *testing.T) {
+	t.Setenv("TEST_ENV_POSITIVE_INT_OR_DEFAULT", "0")
+	if got := envPositiveIntOrDefault("TEST_ENV_POSITIVE_INT_OR_DEFAULT", 7); got != 7 {
+		t.Fatalf("envPositiveIntOrDefault should fall back on zero, got %d", got)
+	}
+
+	t.Setenv("TEST_ENV_POSITIVE_INT_OR_DEFAULT", "-1")
+	if got := envPositiveIntOrDefault("TEST_ENV_POSITIVE_INT_OR_DEFAULT", 7); got != 7 {
+		t.Fatalf("envPositiveIntOrDefault should fall back on negative integer, got %d", got)
+	}
+
+	t.Setenv("TEST_ENV_POSITIVE_INT_OR_DEFAULT", "42")
+	if got := envPositiveIntOrDefault("TEST_ENV_POSITIVE_INT_OR_DEFAULT", 7); got != 42 {
+		t.Fatalf("envPositiveIntOrDefault should parse positive integer, got %d", got)
+	}
+}
+
 func TestParseSlogLevel(t *testing.T) {
 	cases := []struct {
 		in   string

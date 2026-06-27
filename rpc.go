@@ -126,16 +126,61 @@ func (c *rpcClient) call(ctx context.Context, method string, params ...any) (jso
 
 	var rpcResp rpcResponse
 	if err := json.Unmarshal(respBody, &rpcResp); err != nil {
+		if !isHTTPSuccess(resp.StatusCode) {
+			return nil, newHTTPStatusError(resp.StatusCode, resp.Status, respBody)
+		}
 		return nil, &jsonDecodeError{cause: err, body: string(respBody)}
 	}
 
 	if rpcResp.Error != nil {
 		return nil, rpcResp.Error
 	}
+	if !isHTTPSuccess(resp.StatusCode) {
+		return nil, newHTTPStatusError(resp.StatusCode, resp.Status, respBody)
+	}
+	if rpcResp.ID != id {
+		return nil, fmt.Errorf("rpc response id mismatch: got %d want %d", rpcResp.ID, id)
+	}
 
 	slog.Debug("RPC result", "method", method, "result", string(rpcResp.Result))
 
 	return rpcResp.Result, nil
+}
+
+func isHTTPSuccess(statusCode int) bool {
+	return statusCode >= http.StatusOK && statusCode < http.StatusMultipleChoices
+}
+
+type httpStatusError struct {
+	statusCode int
+	status     string
+	body       string
+}
+
+func newHTTPStatusError(statusCode int, status string, body []byte) *httpStatusError {
+	const maxBody = 512
+	bodyText := strings.TrimSpace(string(body))
+	if len(bodyText) > maxBody {
+		bodyText = bodyText[:maxBody] + "..."
+	}
+	return &httpStatusError{
+		statusCode: statusCode,
+		status:     status,
+		body:       bodyText,
+	}
+}
+
+func (e *httpStatusError) Error() string {
+	if e.body == "" {
+		return fmt.Sprintf("rpc http status %s", e.status)
+	}
+	return fmt.Sprintf("rpc http status %s: %s", e.status, e.body)
+}
+
+func (e *httpStatusError) retryable() bool {
+	return e.statusCode == http.StatusRequestTimeout ||
+		e.statusCode == http.StatusTooManyRequests ||
+		e.statusCode >= http.StatusInternalServerError
 }
 
 type jsonDecodeError struct {
@@ -148,8 +193,13 @@ func (e *jsonDecodeError) Error() string {
 }
 
 func isRetryable(err error) bool {
-	if rpcErr, ok := err.(*rpcError); ok {
+	var rpcErr *rpcError
+	if errors.As(err, &rpcErr) {
 		return rpcErr.IsWarmup()
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		return statusErr.retryable()
 	}
 	if netErr, ok := err.(net.Error); ok {
 		if netErr.Timeout() {
@@ -200,7 +250,13 @@ func (r *retryableRPC) call(ctx context.Context, method string, params ...any) (
 			return nil, fmt.Errorf("retry timeout after %v: %w", r.timeout, err)
 		}
 
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 		delay = min(time.Duration(float64(delay)*2), r.maxBackoff)
 	}
 }
@@ -214,6 +270,9 @@ func errorTypeName(err error) string {
 			return "timeout"
 		}
 		return "connection_error"
+	}
+	if _, ok := errors.AsType[*httpStatusError](err); ok {
+		return "http_status"
 	}
 	return "connection_error"
 }

@@ -22,15 +22,21 @@ Environment variables:
 
 ## Run
 ### Local
-```bash path=null start=null
+```bash
 go build -o bitcoin-prometheus-exporter .
 ./bitcoin-prometheus-exporter
 ```
 
 Metrics endpoint:
 
-```text path=null start=null
+```text
 http://localhost:9332/metrics
+```
+
+Health endpoint:
+
+```text
+http://localhost:9332/healthz
 ```
 
 ### Docker
@@ -38,11 +44,9 @@ Image:
 
 A pre-built Docker image is available on [Docker Hub](https://hub.docker.com/r/lnliz/bitcoin-prometheus-exporter).
 
-
-
 Example:
 
-```bash path=null start=null
+```bash
 docker run --rm -p 9332:9332 \
   -e BITCOIN_RPC_HOST=bitcoin-node \
   -e BITCOIN_RPC_PORT=8332 \

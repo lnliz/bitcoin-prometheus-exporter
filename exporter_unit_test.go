@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
@@ -19,6 +21,9 @@ type mockRPCFixture struct {
 	counts            map[string]int
 	warnings          string
 	invalidJSONMethod string
+	handlerDelay      time.Duration
+	activeRequests    int
+	maxActiveRequests int
 }
 
 func newMockRPCFixture() *mockRPCFixture {
@@ -34,6 +39,27 @@ func (f *mockRPCFixture) methodCalls(method string) int {
 	return f.counts[method]
 }
 
+func (f *mockRPCFixture) trackActiveRequest() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.activeRequests++
+	if f.activeRequests > f.maxActiveRequests {
+		f.maxActiveRequests = f.activeRequests
+	}
+}
+
+func (f *mockRPCFixture) finishActiveRequest() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.activeRequests--
+}
+
+func (f *mockRPCFixture) maxActive() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxActiveRequests
+}
+
 func (f *mockRPCFixture) handler(w http.ResponseWriter, r *http.Request) {
 	var req rpcRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -44,6 +70,12 @@ func (f *mockRPCFixture) handler(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.counts[req.Method]++
 	f.mu.Unlock()
+
+	f.trackActiveRequest()
+	defer f.finishActiveRequest()
+	if f.handlerDelay > 0 {
+		time.Sleep(f.handlerDelay)
+	}
 
 	if req.Method == f.invalidJSONMethod {
 		_, _ = w.Write([]byte("not-json"))
@@ -309,8 +341,14 @@ func TestExporterGetBlockStatsUsesCache(t *testing.T) {
 	f := newMockRPCFixture()
 	exp := newExporterForTest(t, f, false)
 
-	stats1 := exp.getBlockStats(context.Background(), "best-hash")
-	stats2 := exp.getBlockStats(context.Background(), "best-hash")
+	stats1, err := exp.getBlockStats(context.Background(), "best-hash")
+	if err != nil {
+		t.Fatalf("getBlockStats failed: %v", err)
+	}
+	stats2, err := exp.getBlockStats(context.Background(), "best-hash")
+	if err != nil {
+		t.Fatalf("getBlockStats failed: %v", err)
+	}
 
 	if stats1 == nil || stats2 == nil {
 		t.Fatalf("expected non-nil stats")
@@ -365,6 +403,69 @@ func TestHandleMetricsJSONDecodeErrorIncrementsCounter(t *testing.T) {
 		t.Fatalf("json_decode error counter mismatch: got %v want 1", got)
 	}
 	if got := testutil.ToFloat64(exp.metrics.exporterRPCErrorsByMethod.WithLabelValues("getmemoryinfo", "json_decode")); got != 1 {
+		t.Fatalf("rpc method error counter mismatch: got %v want 1", got)
+	}
+	if got := testutil.ToFloat64(exp.metrics.scrapeSuccess); got != 0 {
+		t.Fatalf("scrapeSuccess mismatch: got %v want 0", got)
+	}
+}
+
+func TestHandleMetricsSerializesConcurrentScrapes(t *testing.T) {
+	f := newMockRPCFixture()
+	f.handlerDelay = 5 * time.Millisecond
+	exp := newExporterForTest(t, f, false)
+
+	const scrapeCount = 2
+	start := make(chan struct{})
+	errCh := make(chan error, scrapeCount)
+	var wg sync.WaitGroup
+
+	for i := 0; i < scrapeCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+			rr := httptest.NewRecorder()
+			exp.handleMetrics(rr, req)
+			if rr.Code != http.StatusOK {
+				errCh <- fmt.Errorf("unexpected status: got %d want %d", rr.Code, http.StatusOK)
+			}
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := f.maxActive(); got != 1 {
+		t.Fatalf("expected serialized RPC handling, saw %d active requests", got)
+	}
+}
+
+func TestHandleMetricsGetBlockStatsErrorMarksScrapeFailed(t *testing.T) {
+	f := newMockRPCFixture()
+	f.invalidJSONMethod = "getblockstats"
+	exp := newExporterForTest(t, f, false)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rr := httptest.NewRecorder()
+
+	exp.handleMetrics(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unexpected status: got %d want %d", rr.Code, http.StatusOK)
+	}
+	if got := testutil.ToFloat64(exp.metrics.exporterErrors.WithLabelValues("json_decode")); got != 1 {
+		t.Fatalf("json_decode error counter mismatch: got %v want 1", got)
+	}
+	if got := testutil.ToFloat64(exp.metrics.exporterRPCErrorsByMethod.WithLabelValues("getblockstats", "json_decode")); got != 1 {
 		t.Fatalf("rpc method error counter mismatch: got %v want 1", got)
 	}
 	if got := testutil.ToFloat64(exp.metrics.scrapeSuccess); got != 0 {

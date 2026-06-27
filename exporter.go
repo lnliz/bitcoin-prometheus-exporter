@@ -233,6 +233,7 @@ type exporter struct {
 	rpc              *retryableRPC
 	metrics          *metrics
 	metricsHandler   http.Handler
+	scrapeMu         sync.Mutex
 	mu               sync.Mutex
 	cachedBlockHash  string
 	cachedBlockStats map[string]float64
@@ -349,12 +350,12 @@ func (e *exporter) rpcCallFloat(ctx context.Context, method string, params ...an
 	return result, nil
 }
 
-func (e *exporter) getBlockStats(ctx context.Context, blockHash string) map[string]float64 {
+func (e *exporter) getBlockStats(ctx context.Context, blockHash string) (map[string]float64, error) {
 	e.mu.Lock()
 	if e.cachedBlockHash == blockHash && e.cachedBlockStats != nil {
 		stats := e.cachedBlockStats
 		e.mu.Unlock()
-		return stats
+		return stats, nil
 	}
 	e.mu.Unlock()
 
@@ -364,8 +365,7 @@ func (e *exporter) getBlockStats(ctx context.Context, blockHash string) map[stri
 	}
 	result, err := e.rpcCallMap(ctx, "getblockstats", blockHash, fields)
 	if err != nil {
-		slog.Error("Failed to retrieve block statistics from bitcoind", "block_hash", blockHash, "error", err)
-		return nil
+		return nil, err
 	}
 
 	stats := make(map[string]float64)
@@ -378,7 +378,7 @@ func (e *exporter) getBlockStats(ctx context.Context, blockHash string) map[stri
 	e.cachedBlockStats = stats
 	e.mu.Unlock()
 
-	return stats
+	return stats, nil
 }
 
 func (e *exporter) refreshMetrics(ctx context.Context) error {
@@ -534,8 +534,7 @@ func (e *exporter) refreshMetrics(ctx context.Context) error {
 				continue
 			}
 			m.indexSynced.WithLabelValues(name).Set(jsonBool(info["synced"]))
-			best, _ := info["best_block_height"]
-			m.indexBestBlockHeight.WithLabelValues(name).Set(jsonFloat(best))
+			m.indexBestBlockHeight.WithLabelValues(name).Set(jsonFloat(info["best_block_height"]))
 		}
 	}
 
@@ -544,8 +543,10 @@ func (e *exporter) refreshMetrics(ctx context.Context) error {
 	}
 
 	if bestBlockHash != "" {
-		latestBlockStats := e.getBlockStats(ctx, bestBlockHash)
-		if latestBlockStats != nil {
+		latestBlockStats, err := e.getBlockStats(ctx, bestBlockHash)
+		if err != nil {
+			recordRPCError("getblockstats", err)
+		} else {
 			m.latestBlockSize.Set(latestBlockStats["total_size"])
 			m.latestBlockTxs.Set(latestBlockStats["txs"])
 			m.latestBlockHeight.Set(latestBlockStats["height"])
@@ -622,6 +623,9 @@ func (e *exporter) refreshMetrics(ctx context.Context) error {
 }
 
 func (e *exporter) handleMetrics(w http.ResponseWriter, r *http.Request) {
+	e.scrapeMu.Lock()
+	defer e.scrapeMu.Unlock()
+
 	processStart := time.Now()
 
 	err := e.refreshMetrics(r.Context())
